@@ -11,27 +11,26 @@
 
 </div>
 
-> **Fenrir** (*"Il lupo mitologico che divora la luce"* ) is a **Cyber Threat Intelligence (CTI) Aggregator and IOC Scraper** designed to collect, normalize, and index Indicators of Compromise from public feeds (CISA KEV, AlienVault OTX) into a searchable local SQLite database.
+> **Perché ho costruito Fenrir?**  
+> Avere accesso a feed CTI commerciali da decine di migliaia di euro è fuori budget per la maggior parte dei team emergenti. Fenrir nasce come aggregatore leggero e open-source capace di raccogliere cataloghi pubblici di minacce (come le vulnerabilità sfruttate attivamente del CISA KEV o feed OTX) e indicizzarli in un database SQLite locale, interrogabile in pochi millisecondi direttamente da riga di comando durante un'analisi.
 
 ---
 
-## Core Features
+## Funzionalità Principali
 
-| Component | Description |
-|:---|:---|
-| **Feed Collector** | Ingests live threat feeds and CVE catalogs (CISA Known Exploited Vulnerabilities) |
-| **Normalized Storage** | Stores indicators (CVEs, IPs, hashes) securely in a local SQLite database |
-| **Fast IOC Lookup** | CLI search engine to query indicators during incident response or triage |
+- **Feed Collector**: Ingestione automatica di cataloghi di vulnerabilità e IOC da fonti pubbliche.
+- **Indicizzazione Locale**: Storage leggero basato su SQLite per query istantanee offline.
+- **CLI di Ricerca**: Interrogazione immediata di CVE, IP o hash durante le fasi di triage.
 
 ---
 
 ## Quick Start
 
 ```bash
-# Fetch and update threat feeds
+# Aggiorna i feed CTI locali
 python main.py update
 
-# Search for IOCs in local database
+# Cerca un indicatore nel database
 python main.py search CVE
 ```
 
@@ -39,6 +38,6 @@ python main.py search CVE
 
 <div align="center">
 
-**Built by [Fioru12](https://github.com/Fioru12)** — Distributed under the MIT License.
+**Sviluppato da [Fioru12](https://github.com/Fioru12)** — Parte della Suite Asgard.
 
 </div>
