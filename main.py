@@ -1,4 +1,5 @@
 import sys
+import os
 import argparse
 from core.collector import ThreatIntelCollector
 from storage.database import FenrirDatabase
@@ -7,24 +8,60 @@ from core.colors import Colors
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
 
+LOCK_FILE = "fenrir.lock"
+
+
 def run_update():
-    print(Colors.MAGENTA + "=" * 65 + Colors.ENDC)
-    print(f"{Colors.BOLD} Fenrir - Threat Intelligence Aggregator & CTI Engine{Colors.ENDC}")
-    print(Colors.MAGENTA + "=" * 65 + Colors.ENDC)
+    # Lock file per evitare che due processi di update lanciati in parallelo
+    # (es. due cron job sovrapposti) scrivano contemporaneamente sul DB
+    # SQLite, rischiando di corromperlo. open(..., "x") fallisce atomicamente
+    # se il file esiste gia', quindi funziona anche come mutex fra processi.
+    try:
+        lock_fd = os.open(LOCK_FILE, os.O_CREAT | os.O_EXCL | os.O_RDWR)
+        os.close(lock_fd)
+    except FileExistsError:
+        print(f"{Colors.YELLOW}[SKIP]{Colors.ENDC} Un altro update è già in corso, salto questa esecuzione.")
+        return
 
-    collector = ThreatIntelCollector()
-    db = FenrirDatabase("fenrir.db")
+    try:
+        print(Colors.MAGENTA + "=" * 65 + Colors.ENDC)
+        print(f"{Colors.BOLD} Fenrir - Threat Intelligence Aggregator & CTI Engine{Colors.ENDC}")
+        print(Colors.MAGENTA + "=" * 65 + Colors.ENDC)
 
-    print(f"{Colors.CYAN}[*]{Colors.ENDC} Fetching and normalizing threat feeds (CISA KEV)...")
-    iocs = collector.aggregate_feeds()
-    print(f"{Colors.CYAN}[*]{Colors.ENDC} Fetched {len(iocs)} indicators from feeds.")
+        collector = ThreatIntelCollector()
+        db = FenrirDatabase("fenrir.db")
 
-    new_count = db.save_iocs(iocs)
-    print(f"{Colors.GREEN}[SUCCESS]{Colors.ENDC} Added {new_count} new unique IOCs to database.")
+        otx_api_key = os.environ.get("OTX_API_KEY")
 
-    stats = db.get_stats()
-    print(f"    Total IOCs indexed: {stats['total_iocs']}")
-    print(Colors.MAGENTA + "=" * 65 + Colors.ENDC)
+        print(f"{Colors.CYAN}[*]{Colors.ENDC} Fetching and normalizing threat feeds (CISA KEV)...")
+        iocs = []
+        try:
+            iocs.extend(collector.fetch_cisa_kev())
+        except Exception as error:
+            print(f"{Colors.YELLOW}[WARN]{Colors.ENDC} Feed CISA KEV non raggiungibile: {error}")
+
+        if otx_api_key:
+            print(f"{Colors.CYAN}[*]{Colors.ENDC} Fetching and normalizing threat feed (OTX)...")
+            try:
+                iocs.extend(collector.fetch_otx_pulses(otx_api_key))
+            except Exception as error:
+                print(f"{Colors.YELLOW}[WARN]{Colors.ENDC} Feed OTX non raggiungibile: {error}")
+        else:
+            print(f"{Colors.YELLOW}[SKIP]{Colors.ENDC} OTX_API_KEY non impostata, salto il feed OTX.")
+
+        print(f"{Colors.CYAN}[*]{Colors.ENDC} Fetched {len(iocs)} indicators from feeds.")
+
+        new_count = db.save_iocs(iocs)
+        print(f"{Colors.GREEN}[SUCCESS]{Colors.ENDC} Added {new_count} new unique IOCs to database.")
+
+        stats = db.get_stats()
+        print(f"    Total IOCs indexed: {stats['total_iocs']}")
+        print(Colors.MAGENTA + "=" * 65 + Colors.ENDC)
+    finally:
+        try:
+            os.remove(LOCK_FILE)
+        except OSError:
+            pass
 
 def run_search(query: str):
     print(Colors.MAGENTA + "=" * 65 + Colors.ENDC)

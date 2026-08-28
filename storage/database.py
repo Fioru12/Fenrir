@@ -1,6 +1,9 @@
 import sqlite3
 import os
+import logging
 from typing import Dict, Any, List
+
+logger = logging.getLogger(__name__)
 
 class FenrirDatabase:
     """
@@ -34,12 +37,15 @@ class FenrirDatabase:
         count = 0
         for ioc in iocs:
             try:
+                indicator = ioc.get("indicator")
+                if isinstance(indicator, str):
+                    indicator = indicator.strip().upper()
                 cursor.execute("""
                     INSERT OR IGNORE INTO iocs (indicator_type, indicator, name, source, severity, date_added)
                     VALUES (?, ?, ?, ?, ?, ?)
                 """, (
                     ioc.get("indicator_type"),
-                    ioc.get("indicator"),
+                    indicator,
                     ioc.get("name"),
                     ioc.get("source"),
                     ioc.get("severity"),
@@ -47,8 +53,8 @@ class FenrirDatabase:
                 ))
                 if cursor.rowcount > 0:
                     count += 1
-            except Exception:
-                pass
+            except Exception as error:
+                logger.error("Errore nel salvataggio dell'IOC %r: %s", ioc, error)
         conn.commit()
         conn.close()
         return count
@@ -56,10 +62,24 @@ class FenrirDatabase:
     def search_ioc(self, query: str) -> List[Dict[str, Any]]:
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
+
+        # Normalizziamo la query come facciamo con gli indicatori salvati, cosi'
+        # la ricerca su indicator resta case-insensitive rispetto a come sono
+        # normalizzati in save_iocs. Non applichiamo lo stesso a `name`, che
+        # non viene normalizzato al salvataggio.
+        normalized_query = query.strip().upper() if isinstance(query, str) else query
+
+        # Escape esplicito dei metacaratteri LIKE (`%` e `_`) presenti nella
+        # query dell'utente: senza questo, un indicatore che li contiene
+        # letteralmente (es. hash o pattern con underscore) produce match
+        # imprevisti perche' SQLite li interpreta come wildcard.
+        escaped_query = query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        escaped_normalized_query = normalized_query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
         cursor.execute("""
             SELECT indicator_type, indicator, name, source, severity, date_added
-            FROM iocs WHERE indicator LIKE ? OR name LIKE ?
-        """, (f"%{query}%", f"%{query}%"))
+            FROM iocs WHERE indicator LIKE ? ESCAPE '\\' OR name LIKE ? ESCAPE '\\'
+        """, (f"%{escaped_normalized_query}%", f"%{escaped_query}%"))
         rows = cursor.fetchall()
         conn.close()
 
