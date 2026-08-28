@@ -1,6 +1,8 @@
 import pytest
 import os
 import tempfile
+import urllib.error
+from unittest.mock import patch, MagicMock
 from storage.database import FenrirDatabase
 from core.collector import ThreatIntelCollector
 
@@ -73,18 +75,54 @@ def test_database_empty_search():
     os.remove(path)
 
 
-def test_collector_fallback_offline():
+def test_fetch_cisa_kev_parses_a_real_response():
+    fake_payload = {
+        "vulnerabilities": [
+            {"cveID": "CVE-2024-1234", "vulnerabilityName": "Test Vuln", "dateAdded": "2024-01-01"}
+        ]
+    }
+    fake_response = MagicMock()
+    fake_response.read.return_value = __import__("json").dumps(fake_payload).encode()
+    fake_response.__enter__.return_value = fake_response
+
     collector = ThreatIntelCollector()
-    results = collector.fetch_cisa_kev()
-    assert len(results) >= 2
-    assert results[0]["indicator_type"] == "CVE"
+    with patch("core.collector.urllib.request.urlopen", return_value=fake_response):
+        results = collector.fetch_cisa_kev()
+
+    assert results == [{
+        "indicator_type": "CVE",
+        "indicator": "CVE-2024-1234",
+        "name": "Test Vuln",
+        "source": "CISA KEV",
+        "severity": "HIGH",
+        "date_added": "2024-01-01",
+    }]
 
 
-def test_collector_aggregate():
+def test_fetch_cisa_kev_propagates_the_error_instead_of_inventing_data():
+    """Trovato in revisione: in caso di errore, il metodo restituiva IOC
+    finti (CVE-2023-38831, un IP marcato "AlienVault OTX") indistinguibili
+    da dati reali -- stessa forma, stesso "source" -- che finivano salvati
+    nel database delle minacce come se fossero autentici."""
     collector = ThreatIntelCollector()
-    results = collector.aggregate_feeds()
-    assert len(results) >= 2
-    for r in results:
-        assert "indicator_type" in r
-        assert "indicator" in r
-        assert "severity" in r
+    with patch("core.collector.urllib.request.urlopen", side_effect=urllib.error.URLError("offline")):
+        with pytest.raises(urllib.error.URLError):
+            collector.fetch_cisa_kev()
+
+
+def test_aggregate_feeds_returns_empty_when_the_feed_is_unreachable_not_fake_data():
+    collector = ThreatIntelCollector()
+    with patch("core.collector.urllib.request.urlopen", side_effect=urllib.error.URLError("offline")):
+        results = collector.aggregate_feeds()
+    assert results == []
+
+
+def test_aggregate_feeds_one_failing_feed_does_not_discard_another_feeds_iocs():
+    """aggregate_feeds isola i fallimenti per fonte: se in futuro si
+    aggiunge un secondo feed, uno irraggiungibile non deve azzerare gli IOC
+    gia' raccolti dagli altri."""
+    collector = ThreatIntelCollector()
+    good_iocs = [{"indicator_type": "CVE", "indicator": "CVE-2024-9999", "name": "X", "source": "CISA KEV", "severity": "HIGH", "date_added": "2024-01-01"}]
+    with patch.object(collector, "fetch_cisa_kev", return_value=good_iocs):
+        results = collector.aggregate_feeds()
+    assert results == good_iocs

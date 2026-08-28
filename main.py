@@ -15,7 +15,7 @@ def run_update():
     collector = ThreatIntelCollector()
     db = FenrirDatabase("fenrir.db")
 
-    print(f"{Colors.CYAN}[*]{Colors.ENDC} Fetching and normalizing threat feeds (CISA KEV, AlienVault OTX)...")
+    print(f"{Colors.CYAN}[*]{Colors.ENDC} Fetching and normalizing threat feeds (CISA KEV)...")
     iocs = collector.aggregate_feeds()
     print(f"{Colors.CYAN}[*]{Colors.ENDC} Fetched {len(iocs)} indicators from feeds.")
 
