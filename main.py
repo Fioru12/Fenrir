@@ -8,18 +8,37 @@ from core.colors import Colors
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
 
+import time
+
 LOCK_FILE = "fenrir.lock"
+LOCK_MAX_AGE_SECONDS = 900  # 15 minutes
+
+
+def _acquire_lock() -> bool:
+    """Acquires a lock file atomically. Automatically cleans up stale locks (> 15 min)."""
+    if os.path.exists(LOCK_FILE):
+        try:
+            mtime = os.path.getmtime(LOCK_FILE)
+            if time.time() - mtime > LOCK_MAX_AGE_SECONDS:
+                print(f"{Colors.YELLOW}[WARN]{Colors.ENDC} Rilevato lock orfano/scaduto (> 15m), rimozione automatica.")
+                os.remove(LOCK_FILE)
+        except OSError:
+            pass
+
+    try:
+        lock_fd = os.open(LOCK_FILE, os.O_CREAT | os.O_EXCL | os.O_RDWR)
+        with os.fdopen(lock_fd, "w", encoding="utf-8") as f:
+            f.write(f"pid={os.getpid()}\ntime={time.time()}\n")
+        return True
+    except FileExistsError:
+        return False
 
 
 def run_update():
     # Lock file per evitare che due processi di update lanciati in parallelo
     # (es. due cron job sovrapposti) scrivano contemporaneamente sul DB
-    # SQLite, rischiando di corromperlo. open(..., "x") fallisce atomicamente
-    # se il file esiste gia', quindi funziona anche come mutex fra processi.
-    try:
-        lock_fd = os.open(LOCK_FILE, os.O_CREAT | os.O_EXCL | os.O_RDWR)
-        os.close(lock_fd)
-    except FileExistsError:
+    # SQLite, rischiando di corromperlo.
+    if not _acquire_lock():
         print(f"{Colors.YELLOW}[SKIP]{Colors.ENDC} Un altro update è già in corso, salto questa esecuzione.")
         return
 
