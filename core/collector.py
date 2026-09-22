@@ -156,13 +156,80 @@ class ThreatIntelCollector:
                 })
         return results
 
-    def aggregate_feeds(self, otx_api_key: Optional[str] = None) -> List[Dict[str, Any]]:
+    def fetch_misp_attributes(
+        self, base_url: str, api_key: str, limit: int = 50
+    ) -> List[Dict[str, Any]]:
+        """Scarica attributi da un'istanza MISP via REST search.
+
+        Endpoint: POST {base_url}/attributes/restSearch/json con body
+        {"returnFormat": "json", "limit": N}. Auth: header
+        `Authorization: <api_key>`. Normalizza allo stesso schema di
+        fetch_cisa_kev/fetch_otx_pulses con source "MISP".
+
+        Richiede base_url + api_key (env MISP_URL/MISP_API_KEY, mai
+        hardcodati). 401/403 -> ValueError esplicito come per OTX;
+        errori di rete transitori ritentati da _urlopen_with_retry.
+        """
+        if not base_url or not api_key:
+            raise ValueError(
+                "MISP_URL e MISP_API_KEY sono entrambi richiesti per il feed MISP."
+            )
+        url = base_url.rstrip("/") + "/attributes/restSearch/json"
+        body = json.dumps({"returnFormat": "json", "limit": limit}).encode()
+        req = urllib.request.Request(
+            url, data=body,
+            headers={
+                "Authorization": api_key,
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+                "User-Agent": "Fenrir-CTI/1.0",
+            },
+            method="POST",
+        )
+        try:
+            with _urlopen_with_retry(req, timeout=15) as resp:
+                data = json.loads(resp.read().decode())
+        except urllib.error.HTTPError as error:
+            if error.code in (401, 403):
+                raise ValueError(f"MISP API key rifiutata (HTTP {error.code}).") from error
+            raise
+
+        attrs = data.get("response", {}).get("Attribute", []) or []
+        results: List[Dict[str, Any]] = []
+        for attr in attrs:
+            value = attr.get("value")
+            atype = attr.get("type")
+            if not value or not atype:
+                logger.warning(
+                    "Attributo MISP scartato per dati mancanti (value=%r, type=%r)",
+                    value, atype,
+                )
+                continue
+            to_ids = attr.get("to_ids")
+            event_info = attr.get("Event", {}) if isinstance(attr.get("Event"), dict) else {}
+            results.append({
+                "indicator_type": atype,
+                "indicator": value,
+                "name": attr.get("comment") or event_info.get("info") or value,
+                "source": "MISP",
+                "severity": "HIGH" if to_ids else "MEDIUM",
+                "date_added": attr.get("timestamp") or attr.get("date"),
+            })
+        return results
+
+    def aggregate_feeds(
+        self,
+        otx_api_key: Optional[str] = None,
+        misp_url: Optional[str] = None,
+        misp_api_key: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
         """Ogni feed fallisce indipendentemente: uno irraggiungibile non deve
         azzerare gli IOC gia' raccolti dagli altri.
 
         `otx_api_key` e' opzionale: se assente il feed OTX viene semplicemente
         saltato (nessun crash), dato che richiede una API key gratuita non
-        disponibile di default in questo ambiente.
+        disponibile di default in questo ambiente. Stessa regola per MISP
+        (`misp_url` + `misp_api_key` entrambi richiesti, altrimenti skip).
         """
         feed_data: List[Dict[str, Any]] = []
         try:
@@ -175,5 +242,11 @@ class ThreatIntelCollector:
                 feed_data.extend(self.fetch_otx_pulses(otx_api_key))
             except Exception as error:
                 logger.warning("Feed OTX non raggiungibile, nessun IOC recuperato da questa fonte: %s", error)
+
+        if misp_url and misp_api_key:
+            try:
+                feed_data.extend(self.fetch_misp_attributes(misp_url, misp_api_key))
+            except Exception as error:
+                logger.warning("Feed MISP non raggiungibile, nessun IOC recuperato da questa fonte: %s", error)
 
         return feed_data
