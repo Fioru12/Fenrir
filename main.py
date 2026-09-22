@@ -51,6 +51,8 @@ def run_update():
         db = FenrirDatabase("fenrir.db")
 
         otx_api_key = os.environ.get("OTX_API_KEY")
+        misp_url = os.environ.get("MISP_URL")
+        misp_api_key = os.environ.get("MISP_API_KEY")
 
         print(f"{Colors.CYAN}[*]{Colors.ENDC} Fetching and normalizing threat feeds (CISA KEV)...")
         iocs = []
@@ -67,6 +69,15 @@ def run_update():
                 print(f"{Colors.YELLOW}[WARN]{Colors.ENDC} Feed OTX non raggiungibile: {error}")
         else:
             print(f"{Colors.YELLOW}[SKIP]{Colors.ENDC} OTX_API_KEY non impostata, salto il feed OTX.")
+
+        if misp_url and misp_api_key:
+            print(f"{Colors.CYAN}[*]{Colors.ENDC} Fetching and normalizing threat feed (MISP)...")
+            try:
+                iocs.extend(collector.fetch_misp_attributes(misp_url, misp_api_key))
+            except Exception as error:
+                print(f"{Colors.YELLOW}[WARN]{Colors.ENDC} Feed MISP non raggiungibile: {error}")
+        else:
+            print(f"{Colors.YELLOW}[SKIP]{Colors.ENDC} MISP_URL/MISP_API_KEY non impostate, salto il feed MISP.")
 
         print(f"{Colors.CYAN}[*]{Colors.ENDC} Fetched {len(iocs)} indicators from feeds.")
 
